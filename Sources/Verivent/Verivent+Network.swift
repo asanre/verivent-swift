@@ -1,7 +1,7 @@
 import Foundation
-import SnoopKit
+import VeriventKit
 
-extension Snoop {
+extension Verivent {
 
     /// A request as `URLSession` described it, handed to the `keepRequest` filter.
     public struct Request {
@@ -11,7 +11,7 @@ extension Snoop {
         public let path: String
         public let headers: [String: String]
 
-        fileprivate init(_ raw: SnoopRequest) {
+        fileprivate init(_ raw: NativeRequest) {
             method = raw.method
             url = raw.url
             host = raw.host
@@ -26,13 +26,13 @@ extension Snoop {
 
      ```swift
      let configuration = URLSessionConfiguration.default
-     Snoop.installNetworkInterceptor(on: configuration)
+     Verivent.installNetworkInterceptor(on: configuration)
      let session = URLSession(configuration: configuration)
      ```
 
      What it does not see, because `URLProtocol` cannot: `URLSession.shared` (its `protocolClasses`
      is not configurable), WebSockets, background sessions, and any session a third-party SDK builds
-     for itself. And because the request is replayed through Snoop's own session, **your
+     for itself. And because the request is replayed through Verivent's own session, **your
      `URLSessionDelegate` is not consulted for intercepted requests** — certificate pinning or a
      credential you would have supplied in `didReceive challenge:` does not run, and the connection
      falls back to the system's default trust evaluation. That is no weaker than not intercepting at
@@ -55,13 +55,13 @@ extension Snoop {
      */
     public static func installNetworkInterceptor(
         on configuration: URLSessionConfiguration,
-        maxContentLength: Int64 = SnoopNetwork.shared.defaultMaxContentLength,
+        maxContentLength: Int64 = NativeNetwork.shared.defaultMaxContentLength,
         redactHeader: ((String) -> Bool)? = nil,
         redactQueryParameter: ((String) -> Bool)? = nil,
         redactBody: ((String) -> String)? = nil,
         keepRequest: ((Request) -> Bool)? = nil
     ) {
-        SnoopNetwork.shared.configure(
+        NativeNetwork.shared.configure(
             maxContentLength: maxContentLength,
             redactHeader: redactHeader.map { predicate in { KotlinBoolean(bool: predicate($0)) } },
             redactQueryParameter: redactQueryParameter.map { predicate in
@@ -72,12 +72,12 @@ extension Snoop {
                 { raw in KotlinBoolean(bool: predicate(Request(raw))) }
             }
         )
-        SnoopInnerSession.shared.adopt(configuration)
+        InnerSession.shared.adopt(configuration)
 
         // At the front, and de-duplicated: appended, a protocol already in the list would claim the
-        // request first and Snoop would never see it.
+        // request first and Verivent would never see it.
         var classes = configuration.protocolClasses ?? []
-        classes.removeAll { $0 == SnoopURLProtocol.self }
-        configuration.protocolClasses = [SnoopURLProtocol.self] + classes
+        classes.removeAll { $0 == VeriventURLProtocol.self }
+        configuration.protocolClasses = [VeriventURLProtocol.self] + classes
     }
 }

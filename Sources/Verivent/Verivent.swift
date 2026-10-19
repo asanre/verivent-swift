@@ -1,11 +1,11 @@
 import Foundation
-import SnoopKit
+import VeriventKit
 
-/// Snoop for native iOS hosts: a vendor-agnostic analytics sink plus the web viewer.
+/// Verivent for native iOS hosts: a vendor-agnostic analytics sink plus the web viewer.
 ///
 /// Wraps the Kotlin bridge so nothing Objective-C shaped reaches the call site — no `KotlinBoolean`
 /// in your closures, no `.shared` singletons, no `Int32` ports.
-public enum Snoop {
+public enum Verivent {
 
     // MARK: - Events
 
@@ -15,7 +15,7 @@ public enum Snoop {
         public let channel: String
         public let properties: [String: Any]
 
-        fileprivate init(_ raw: SnoopEvent) {
+        fileprivate init(_ raw: NativeEvent) {
             self.name = raw.name
             self.channel = raw.channel
             self.properties = raw.properties as? [String: Any] ?? [:]
@@ -33,13 +33,16 @@ public enum Snoop {
     ///     Applied as events are captured, so it does not regroup what was captured before.
     ///   - groupLabelProperty: property of that event whose value labels the group. When `nil`, or
     ///     absent from the event, the group is labelled with the event's own name.
+    ///   - logToConsole: also write each captured event as one JSON line to the unified log
+    ///     (`log stream --predicate 'eventMessage BEGINSWITH "VeriventEvent"'`), already redacted.
     public static func configure(
         keepEvent: ((Event) -> Bool)? = nil,
         redactProperty: ((String) -> Bool)? = nil,
-        groupByEvent: String? = SnoopEvents.shared.groupByEvent,
-        groupLabelProperty: String? = SnoopEvents.shared.groupLabelProperty
+        groupByEvent: String? = NativeEvents.shared.groupByEvent,
+        groupLabelProperty: String? = NativeEvents.shared.groupLabelProperty,
+        logToConsole: Bool = NativeEvents.shared.logToConsole
     ) {
-        SnoopEvents.shared.configure(
+        NativeEvents.shared.configure(
             keepEvent: keepEvent.map { predicate in
                 { raw in KotlinBoolean(bool: predicate(Event(raw))) }
             },
@@ -47,14 +50,40 @@ public enum Snoop {
                 { key in KotlinBoolean(bool: predicate(key)) }
             },
             groupByEvent: groupByEvent,
-            groupLabelProperty: groupLabelProperty
+            groupLabelProperty: groupLabelProperty,
+            logToConsole: logToConsole
         )
     }
 
     /// Record one event. Wire this to your own analytics facade, alongside the real SDK call.
     public static func log(_ name: String, channel: String, properties: [String: Any] = [:]) {
-        SnoopEvents.shared.log(name: name, channel: channel, properties: properties)
+        NativeEvents.shared.log(name: name, channel: channel, properties: properties)
     }
+
+    // MARK: - Tracking plan
+
+    /// Where the loaded tracking plan is kept across launches, for example a folder in Application
+    /// Support. `nil` keeps it in memory for the life of the process. Setting a folder that already
+    /// holds a plan loads it.
+    public static var storageDirectory: URL? {
+        get { NativeEvents.shared.storageDir.map { URL(fileURLWithPath: $0) } }
+        set { NativeEvents.shared.storageDir = newValue?.path }
+    }
+
+    /// Validate events captured from now on against the analytics team's tracking plan. Each event
+    /// the plan defines then shows whether it matches it, and what breaks it when it doesn't.
+    ///
+    /// - Throws: when `json` isn't a valid tracking plan; the current plan stays in place.
+    public static func loadTrackingPlan(_ json: String) throws {
+        try NativeEvents.shared.loadTrackingPlan(json: json)
+    }
+
+    public static func clearTrackingPlan() {
+        NativeEvents.shared.clearTrackingPlan()
+    }
+
+    /// Version of the loaded tracking plan, or `nil` when none is loaded.
+    public static var trackingPlanVersion: String? { NativeEvents.shared.trackingPlanVersion }
 
     // MARK: - Web viewer
 
@@ -65,11 +94,11 @@ public enum Snoop {
         case lan
         case host(String)
 
-        fileprivate var raw: any SnoopViewerBind {
+        fileprivate var raw: any NativeViewerBind {
             switch self {
-            case .local: return SnoopViewerBindLocal.shared
-            case .lan: return SnoopViewerBindLan.shared
-            case .host(let address): return SnoopViewerBindHost(address: address)
+            case .local: return NativeViewerBindLocal.shared
+            case .lan: return NativeViewerBindLan.shared
+            case .host(let address): return NativeViewerBindHost(address: address)
             }
         }
     }
@@ -84,23 +113,23 @@ public enum Snoop {
         port: Int? = nil,
         token: String? = nil
     ) -> String {
-        SnoopViewer.shared.start(
+        NativeViewer.shared.start(
             bind: bind.raw,
-            port: port.map(Int32.init) ?? SnoopViewer.shared.defaultPort,
+            port: port.map(Int32.init) ?? NativeViewer.shared.defaultPort,
             token: token
         )
     }
 
     public static func stopWebViewer() {
-        SnoopViewer.shared.stop()
+        NativeViewer.shared.stop()
     }
 
-    public static var isWebViewerRunning: Bool { SnoopViewer.shared.isRunning }
+    public static var isWebViewerRunning: Bool { NativeViewer.shared.isRunning }
 
     /// The access token every request must carry as `?t=`, or nil when no viewer is running.
     /// Already baked into the URL `startWebViewer` returns; exposed for hand-built requests.
-    public static var webViewerToken: String? { SnoopViewer.shared.token }
+    public static var webViewerToken: String? { NativeViewer.shared.token }
 
     /// The URL to reach this device from another machine, or nil on a `.local` bind.
-    public static var lanURL: String? { SnoopViewer.shared.lanUrl() }
+    public static var lanURL: String? { NativeViewer.shared.lanUrl() }
 }

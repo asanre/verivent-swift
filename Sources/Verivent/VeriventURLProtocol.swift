@@ -1,19 +1,19 @@
 import Foundation
-import SnoopKit
+import VeriventKit
 
 /**
  Intercepts every HTTP call made through a `URLSessionConfiguration` it was installed on and feeds
- it to Snoop. Install it with `Snoop.installNetworkInterceptor(on:)` rather than reaching for this
+ it to Verivent. Install it with `Verivent.installNetworkInterceptor(on:)` rather than reaching for this
  class directly; it is public only so a host can recognise or remove it in its own
  `protocolClasses`.
 
  **Experimental** — the shape of this may change in a minor release.
  */
-public final class SnoopURLProtocol: URLProtocol {
+public final class VeriventURLProtocol: URLProtocol {
 
     /// Marks a request we already handled, so the copy we send through the inner session doesn't
     /// come straight back to us. The scheme check below can't do this on its own.
-    private static let handledKey = "com.snoop.handled"
+    private static let handledKey = "io.github.asanre.verivent.handled"
 
     /// A request body stream is one-shot: reading a prefix and handing the rest back is impossible,
     /// so a body is only captured when we can drain it whole and re-attach it. Past this size the
@@ -46,13 +46,13 @@ public final class SnoopURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.unknown))
             return
         }
-        SnoopURLProtocol.setProperty(true, forKey: SnoopURLProtocol.handledKey, in: marked)
+        VeriventURLProtocol.setProperty(true, forKey: VeriventURLProtocol.handledKey, in: marked)
         var inner = marked as URLRequest
 
-        let body = SnoopURLProtocol.captureRequestBody(from: request, into: &inner)
+        let body = VeriventURLProtocol.captureRequestBody(from: request, into: &inner)
         let url = request.url
 
-        let id = SnoopNetwork.shared.begin(
+        let id = NativeNetwork.shared.begin(
             method: request.httpMethod ?? "GET",
             url: url?.absoluteString ?? "",
             host: url?.host ?? "",
@@ -64,14 +64,14 @@ public final class SnoopURLProtocol: URLProtocol {
             bodyPlaceholder: body.placeholder
         )
 
-        let task = SnoopInnerSession.shared.session.dataTask(with: inner)
+        let task = InnerSession.shared.session.dataTask(with: inner)
         lock.lock()
         callId = id
         innerTask = task
         startedAt = DispatchTime.now()
         lock.unlock()
 
-        SnoopInnerSession.shared.register(self, for: task)
+        InnerSession.shared.register(self, for: task)
         task.resume()
     }
 
@@ -87,10 +87,10 @@ public final class SnoopURLProtocol: URLProtocol {
 
         task?.cancel()
         if !alreadyDone, let id = id {
-            SnoopNetwork.shared.fail(id: id, message: "cancelled", durationMillis: elapsed)
+            NativeNetwork.shared.fail(id: id, message: "cancelled", durationMillis: elapsed)
         }
         if let identifier = task?.taskIdentifier {
-            SnoopInnerSession.shared.forget(identifier)
+            InnerSession.shared.forget(identifier)
         }
     }
 
@@ -117,7 +117,7 @@ public final class SnoopURLProtocol: URLProtocol {
         // let go. Talking to it then is a use-after-teardown.
         guard !gone else { return }
 
-        // Forwarded first and unmodified: the host's streaming must never wait on Snoop.
+        // Forwarded first and unmodified: the host's streaming must never wait on Verivent.
         client?.urlProtocol(self, didLoad: data)
 
         lock.lock()
@@ -125,7 +125,7 @@ public final class SnoopURLProtocol: URLProtocol {
         totalResponseBytes += Int64(data.count)
         // One byte past the limit is all Kotlin needs to flag truncation, exactly like the Ktor
         // adapter's `readRemaining(maxLen + 1)`.
-        let cap = Int(SnoopNetwork.shared.maxContentLength) + 1
+        let cap = Int(NativeNetwork.shared.maxContentLength) + 1
         if buffered.count < cap {
             buffered.append(data.prefix(cap - buffered.count))
         }
@@ -163,7 +163,7 @@ public final class SnoopURLProtocol: URLProtocol {
 
         if let error = error {
             if let id = id {
-                SnoopNetwork.shared.fail(
+                NativeNetwork.shared.fail(
                     id: id,
                     message: error.localizedDescription,
                     durationMillis: elapsed
@@ -173,12 +173,12 @@ public final class SnoopURLProtocol: URLProtocol {
             return
         }
         if let id = id, let response = response {
-            SnoopNetwork.shared.complete(
+            NativeNetwork.shared.complete(
                 id: id,
                 status: Int32(response.statusCode),
                 protocol: negotiated,
                 contentType: response.value(forHTTPHeaderField: "Content-Type"),
-                headers: SnoopURLProtocol.headerFields(of: response),
+                headers: VeriventURLProtocol.headerFields(of: response),
                 body: body,
                 bodyByteCount: total,
                 durationMillis: elapsed
@@ -206,12 +206,12 @@ public final class SnoopURLProtocol: URLProtocol {
         lock.unlock()
 
         if let id = id {
-            SnoopNetwork.shared.complete(
+            NativeNetwork.shared.complete(
                 id: id,
                 status: Int32(response.statusCode),
                 protocol: nil,
                 contentType: response.value(forHTTPHeaderField: "Content-Type"),
-                headers: SnoopURLProtocol.headerFields(of: response),
+                headers: VeriventURLProtocol.headerFields(of: response),
                 body: nil,
                 bodyByteCount: 0,
                 durationMillis: elapsed
@@ -221,7 +221,7 @@ public final class SnoopURLProtocol: URLProtocol {
         // marker across — leaving it on would make `canInit` skip the next hop entirely.
         var forwarded = newRequest
         if let mutable = (newRequest as NSURLRequest).mutableCopy() as? NSMutableURLRequest {
-            SnoopURLProtocol.removeProperty(forKey: SnoopURLProtocol.handledKey, in: mutable)
+            VeriventURLProtocol.removeProperty(forKey: VeriventURLProtocol.handledKey, in: mutable)
             forwarded = mutable as URLRequest
         }
         client?.urlProtocol(self, wasRedirectedTo: forwarded, redirectResponse: response)

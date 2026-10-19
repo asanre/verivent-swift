@@ -2,19 +2,19 @@ import Foundation
 
 /**
  The session that actually performs the intercepted requests, and the delegate that reports them
- back to their `SnoopURLProtocol`.
+ back to their `VeriventURLProtocol`.
 
  One shared session rather than one per request: a session per call throws away connection pooling,
  so every request would pay for a fresh TLS handshake — a steep price for a debug tool. Its
  configuration is a copy of the host's, minus our own protocol class, so timeouts, cookies, extra
  headers, the TLS minimum and the cache policy all survive interception.
  */
-final class SnoopInnerSession: NSObject {
+final class InnerSession: NSObject {
 
-    static let shared = SnoopInnerSession()
+    static let shared = InnerSession()
 
     private let lock = NSLock()
-    private var handlers: [Int: SnoopURLProtocol] = [:]
+    private var handlers: [Int: VeriventURLProtocol] = [:]
     private var configuration = URLSessionConfiguration.default
     private var cached: URLSession?
 
@@ -22,7 +22,7 @@ final class SnoopInnerSession: NSObject {
         let queue = OperationQueue()
         // Serial, so a task's callbacks never interleave with each other.
         queue.maxConcurrentOperationCount = 1
-        queue.name = "com.snoop.inner-session"
+        queue.name = "io.github.asanre.verivent.inner-session"
         return queue
     }()
 
@@ -39,7 +39,7 @@ final class SnoopInnerSession: NSObject {
     /// first — last one wins, which is why `installNetworkInterceptor(on:)` documents it.
     func adopt(_ hostConfiguration: URLSessionConfiguration) {
         guard let copy = hostConfiguration.copy() as? URLSessionConfiguration else { return }
-        copy.protocolClasses = (copy.protocolClasses ?? []).filter { $0 != SnoopURLProtocol.self }
+        copy.protocolClasses = (copy.protocolClasses ?? []).filter { $0 != VeriventURLProtocol.self }
         lock.lock()
         configuration = copy
         let previous = cached
@@ -48,7 +48,7 @@ final class SnoopInnerSession: NSObject {
         previous?.finishTasksAndInvalidate()
     }
 
-    func register(_ handler: SnoopURLProtocol, for task: URLSessionTask) {
+    func register(_ handler: VeriventURLProtocol, for task: URLSessionTask) {
         lock.lock()
         handlers[task.taskIdentifier] = handler
         lock.unlock()
@@ -60,14 +60,14 @@ final class SnoopInnerSession: NSObject {
         lock.unlock()
     }
 
-    private func handler(for task: URLSessionTask) -> SnoopURLProtocol? {
+    private func handler(for task: URLSessionTask) -> VeriventURLProtocol? {
         lock.lock()
         defer { lock.unlock() }
         return handlers[task.taskIdentifier]
     }
 }
 
-extension SnoopInnerSession: URLSessionDataDelegate {
+extension InnerSession: URLSessionDataDelegate {
 
     func urlSession(
         _ session: URLSession,
