@@ -20,6 +20,11 @@ public final class VeriventURLProtocol: URLProtocol {
     /// upload's integrity wins over seeing it.
     private static let streamDrainCap: Int64 = 1 << 20
 
+    /// Where a finished call is recorded: the host's body sanitizer and the copy into Kotlin run
+    /// here, not on the delegate queue every intercepted request shares. Serial, so a call's record
+    /// keeps its order.
+    private static let captureQueue = DispatchQueue(label: "io.github.asanre.verivent.capture")
+
     private let lock = NSLock()
     private var callId: String?
     private var innerTask: URLSessionTask?
@@ -28,6 +33,8 @@ public final class VeriventURLProtocol: URLProtocol {
     private var protocolName: String?
     private var buffered = Data()
     private var totalResponseBytes: Int64 = 0
+    /// Bytes of the response worth keeping, read once: every chunk checks it.
+    private var responseCap = 0
     private var finished = false
     private var stopped = false
 
@@ -49,7 +56,14 @@ public final class VeriventURLProtocol: URLProtocol {
         VeriventURLProtocol.setProperty(true, forKey: VeriventURLProtocol.handledKey, in: marked)
         var inner = marked as URLRequest
 
-        let body = VeriventURLProtocol.captureRequestBody(from: request, into: &inner)
+        let body: RequestBody
+        do {
+            body = try VeriventURLProtocol.captureRequestBody(from: request, into: &inner)
+        } catch {
+            // The stream is spent by now: sending what's left would upload a truncated body.
+            client?.urlProtocol(self, didFailWithError: error)
+            return
+        }
         let url = request.url
 
         let id = NativeNetwork.shared.begin(
@@ -69,6 +83,9 @@ public final class VeriventURLProtocol: URLProtocol {
         callId = id
         innerTask = task
         startedAt = DispatchTime.now()
+        // One byte past the limit is all Kotlin needs to flag truncation, exactly like the Ktor
+        // adapter's `readRemaining(maxLen + 1)`.
+        responseCap = Int(NativeNetwork.shared.maxContentLength) + 1
         lock.unlock()
 
         InnerSession.shared.register(self, for: task)
@@ -123,11 +140,8 @@ public final class VeriventURLProtocol: URLProtocol {
         lock.lock()
         defer { lock.unlock() }
         totalResponseBytes += Int64(data.count)
-        // One byte past the limit is all Kotlin needs to flag truncation, exactly like the Ktor
-        // adapter's `readRemaining(maxLen + 1)`.
-        let cap = Int(NativeNetwork.shared.maxContentLength) + 1
-        if buffered.count < cap {
-            buffered.append(data.prefix(cap - buffered.count))
+        if buffered.count < responseCap {
+            buffered.append(data.prefix(responseCap - buffered.count))
         }
     }
 
@@ -162,29 +176,32 @@ public final class VeriventURLProtocol: URLProtocol {
         lock.unlock()
 
         if let error = error {
+            if !silent { client?.urlProtocol(self, didFailWithError: error) }
             if let id = id {
-                NativeNetwork.shared.fail(
+                let message = error.localizedDescription
+                VeriventURLProtocol.captureQueue.async {
+                    NativeNetwork.shared.fail(id: id, message: message, durationMillis: elapsed)
+                }
+            }
+            return
+        }
+        if !silent { client?.urlProtocolDidFinishLoading(self) }
+        if let id = id, let response = response {
+            let contentType = response.value(forHTTPHeaderField: "Content-Type")
+            let headers = VeriventURLProtocol.headerFields(of: response)
+            VeriventURLProtocol.captureQueue.async {
+                NativeNetwork.shared.complete(
                     id: id,
-                    message: error.localizedDescription,
+                    status: Int32(response.statusCode),
+                    protocol: negotiated,
+                    contentType: contentType,
+                    headers: headers,
+                    body: body,
+                    bodyByteCount: total,
                     durationMillis: elapsed
                 )
             }
-            if !silent { client?.urlProtocol(self, didFailWithError: error) }
-            return
         }
-        if let id = id, let response = response {
-            NativeNetwork.shared.complete(
-                id: id,
-                status: Int32(response.statusCode),
-                protocol: negotiated,
-                contentType: response.value(forHTTPHeaderField: "Content-Type"),
-                headers: VeriventURLProtocol.headerFields(of: response),
-                body: body,
-                bodyByteCount: total,
-                durationMillis: elapsed
-            )
-        }
-        if !silent { client?.urlProtocolDidFinishLoading(self) }
     }
 
     /**
@@ -206,16 +223,20 @@ public final class VeriventURLProtocol: URLProtocol {
         lock.unlock()
 
         if let id = id {
-            NativeNetwork.shared.complete(
-                id: id,
-                status: Int32(response.statusCode),
-                protocol: nil,
-                contentType: response.value(forHTTPHeaderField: "Content-Type"),
-                headers: VeriventURLProtocol.headerFields(of: response),
-                body: nil,
-                bodyByteCount: 0,
-                durationMillis: elapsed
-            )
+            let contentType = response.value(forHTTPHeaderField: "Content-Type")
+            let headers = VeriventURLProtocol.headerFields(of: response)
+            VeriventURLProtocol.captureQueue.async {
+                NativeNetwork.shared.complete(
+                    id: id,
+                    status: Int32(response.statusCode),
+                    protocol: nil,
+                    contentType: contentType,
+                    headers: headers,
+                    body: nil,
+                    bodyByteCount: 0,
+                    durationMillis: elapsed
+                )
+            }
         }
         // URLSession derives the redirect from the request we marked as handled, and carries the
         // marker across — leaving it on would make `canInit` skip the next hop entirely.
@@ -261,11 +282,13 @@ public final class VeriventURLProtocol: URLProtocol {
      already turned it into a stream, even for a plain `dataTask` whose caller set `httpBody`. So
      the stream branch is the normal path: drain it whole and re-attach it as `httpBody` on the
      request we actually send, which is only safe when `Content-Length` says it fits in memory.
+     Only the declared length is read: the server takes no more than that, and it bounds memory
+     even when the header understates the stream. Throws when the stream fails mid-read.
      */
     private static func captureRequestBody(
         from original: URLRequest,
         into inner: inout URLRequest
-    ) -> RequestBody {
+    ) throws -> RequestBody {
         if let data = original.httpBody {
             return RequestBody(data: data, byteCount: Int64(data.count), placeholder: nil)
         }
@@ -273,26 +296,27 @@ public final class VeriventURLProtocol: URLProtocol {
             return RequestBody(data: nil, byteCount: 0, placeholder: nil)
         }
         let declared = original.value(forHTTPHeaderField: "Content-Length").flatMap { Int64($0) }
-        guard let length = declared, length <= streamDrainCap, let drained = drain(stream) else {
+        guard let length = declared, length <= streamDrainCap else {
             return RequestBody(
                 data: nil,
                 byteCount: declared ?? -1,
                 placeholder: "(streaming body — not captured)"
             )
         }
+        let drained = try drain(stream, limit: length)
         inner.httpBodyStream = nil
         inner.httpBody = drained
         return RequestBody(data: drained, byteCount: Int64(drained.count), placeholder: nil)
     }
 
-    private static func drain(_ stream: InputStream) -> Data? {
+    private static func drain(_ stream: InputStream, limit: Int64) throws -> Data {
         stream.open()
         defer { stream.close() }
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
-        while stream.hasBytesAvailable {
-            let read = stream.read(&buffer, maxLength: buffer.count)
-            if read < 0 { return nil }
+        while Int64(data.count) < limit && stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: min(buffer.count, Int(limit - Int64(data.count))))
+            if read < 0 { throw stream.streamError ?? URLError(.unknown) }
             if read == 0 { break }
             data.append(buffer, count: read)
         }

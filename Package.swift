@@ -14,8 +14,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "VeriventKit",
-            url: "https://github.com/asanre/verivent/releases/download/v0.8.0/VeriventKit.xcframework.zip",
-            checksum: "310f3a7bc12f8af037935da35fc37ac9cc5cdf06e1955ead1e3eadbf79452665"
+            url: "https://github.com/asanre/verivent/releases/download/v0.9.0/VeriventKit.xcframework.zip",
+            checksum: "3a94a594c9c91bdd8268b35e4b173d4491704e2842adb373941781f22b1b99be"
         ),
         .target(name: "Verivent", dependencies: ["VeriventKit"]),
     ]
