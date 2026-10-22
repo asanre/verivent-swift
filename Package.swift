@@ -10,13 +10,16 @@ let package = Package(
     platforms: [.iOS(.v14)],
     products: [
         .library(name: "Verivent", targets: ["Verivent"]),
+        .library(name: "VeriventUITesting", targets: ["VeriventUITesting"]),
     ],
     targets: [
         .binaryTarget(
             name: "VeriventKit",
-            url: "https://github.com/asanre/verivent/releases/download/v0.9.0/VeriventKit.xcframework.zip",
-            checksum: "3a94a594c9c91bdd8268b35e4b173d4491704e2842adb373941781f22b1b99be"
+            url: "https://github.com/asanre/verivent/releases/download/v0.10.0/VeriventKit.xcframework.zip",
+            checksum: "f67ce7d69bd5e133a1f21d5aa6e2142f0436a3dd58c30741ebe530edb4b0a673"
         ),
         .target(name: "Verivent", dependencies: ["VeriventKit"]),
+        // For UI test targets: only XCTest and URLSession, nothing of Verivent in the test runner.
+        .target(name: "VeriventUITesting"),
     ]
 )

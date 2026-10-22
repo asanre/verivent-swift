@@ -8,6 +8,7 @@ extension Verivent {
         public let method: String
         public let url: String
         public let host: String
+        /// Percent-encoded as sent (`/my%20file`), as Ktor's `encodedPath` is.
         public let path: String
         public let headers: [String: String]
 
@@ -51,6 +52,8 @@ extension Verivent {
        - redactQueryParameter: redact matching query parameters in the captured URL. Common
          secret-bearing names (`api_key`, `token`, …) are always redacted on top of this.
        - redactBody: rewrite a captured body preview before it is stored.
+       - redactPath: rewrite the captured path, percent-encoded as sent, in the path and the URL —
+         for a secret in it, such as `/reset/<token>`. Nothing in a path is redacted without it.
        - keepRequest: capture a request only when this returns true.
      */
     public static func installNetworkInterceptor(
@@ -59,8 +62,10 @@ extension Verivent {
         redactHeader: ((String) -> Bool)? = nil,
         redactQueryParameter: ((String) -> Bool)? = nil,
         redactBody: ((String) -> String)? = nil,
+        redactPath: ((String) -> String)? = nil,
         keepRequest: ((Request) -> Bool)? = nil
     ) {
+        _ = uiTestServer
         NativeNetwork.shared.configure(
             maxContentLength: maxContentLength,
             redactHeader: redactHeader.map { predicate in { KotlinBoolean(bool: predicate($0)) } },
@@ -68,6 +73,7 @@ extension Verivent {
                 { KotlinBoolean(bool: predicate($0)) }
             },
             redactBody: redactBody,
+            redactPath: redactPath,
             keepRequest: keepRequest.map { predicate in
                 { raw in KotlinBoolean(bool: predicate(Request(raw))) }
             }

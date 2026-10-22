@@ -70,7 +70,8 @@ public final class VeriventURLProtocol: URLProtocol {
             method: request.httpMethod ?? "GET",
             url: url?.absoluteString ?? "",
             host: url?.host ?? "",
-            path: url?.path ?? "",
+            // Percent-encoded as sent, the way Ktor's encodedPath is: `url.path` decodes it.
+            path: url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath } ?? "",
             contentType: request.value(forHTTPHeaderField: "Content-Type"),
             headers: request.allHTTPHeaderFields ?? [:],
             body: body.data,
@@ -245,6 +246,7 @@ public final class VeriventURLProtocol: URLProtocol {
             VeriventURLProtocol.removeProperty(forKey: VeriventURLProtocol.handledKey, in: mutable)
             forwarded = mutable as URLRequest
         }
+        // As Apple's CustomHTTPProtocol sample does; the client doesn't surface this cancellation.
         client?.urlProtocol(self, wasRedirectedTo: forwarded, redirectResponse: response)
         task?.cancel()
         client?.urlProtocol(

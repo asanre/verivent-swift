@@ -42,6 +42,7 @@ public enum Verivent {
         groupLabelProperty: String? = NativeEvents.shared.groupLabelProperty,
         logToConsole: Bool = NativeEvents.shared.logToConsole
     ) {
+        _ = uiTestServer
         NativeEvents.shared.configure(
             keepEvent: keepEvent.map { predicate in
                 { raw in KotlinBoolean(bool: predicate(Event(raw))) }
@@ -57,6 +58,7 @@ public enum Verivent {
 
     /// Record one event. Wire this to your own analytics facade, alongside the real SDK call.
     public static func log(_ name: String, channel: String, properties: [String: Any] = [:]) {
+        _ = uiTestServer
         NativeEvents.shared.log(name: name, channel: channel, properties: properties)
     }
 
@@ -75,6 +77,7 @@ public enum Verivent {
     ///
     /// - Throws: when `json` isn't a valid tracking plan; the current plan stays in place.
     public static func loadTrackingPlan(_ json: String) throws {
+        _ = uiTestServer
         try NativeEvents.shared.loadTrackingPlan(json: json)
     }
 
@@ -113,7 +116,8 @@ public enum Verivent {
         port: Int? = nil,
         token: String? = nil
     ) -> String {
-        NativeViewer.shared.start(
+        _ = uiTestServer
+        return NativeViewer.shared.start(
             bind: bind.raw,
             port: port.map(Int32.init) ?? NativeViewer.shared.defaultPort,
             token: token
@@ -132,4 +136,16 @@ public enum Verivent {
 
     /// The URL to reach this device from another machine, or nil on a `.local` bind.
     public static var lanURL: String? { NativeViewer.shared.lanUrl() }
+
+    // MARK: - UI tests
+
+    /// Started the first time the app touches Verivent when `VeriventUITesting` launched it, so a UI
+    /// test can check the app's analytics with no test code in the app. Before any viewer of the
+    /// app's own: the first one started keeps the port and the token.
+    static let uiTestServer: Void = {
+        let environment = ProcessInfo.processInfo.environment
+        guard let token = environment["VERIVENT_UITEST_TOKEN"] else { return }
+        let port = environment["VERIVENT_UITEST_PORT"].flatMap(Int32.init) ?? NativeViewer.shared.defaultPort
+        NativeViewer.shared.start(bind: Bind.local.raw, port: port, token: token)
+    }()
 }
