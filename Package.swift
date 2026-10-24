@@ -15,8 +15,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "VeriventKit",
-            url: "https://github.com/asanre/verivent/releases/download/v0.10.1/VeriventKit.xcframework.zip",
-            checksum: "1d756fe3e6d69a706b5fe46cd8727e6fa552a0dd9873cad28b203f98027dd86d"
+            url: "https://github.com/asanre/verivent/releases/download/v0.11.0/VeriventKit.xcframework.zip",
+            checksum: "596711231bd64b62977c588065af5b33e7dabe550b6c286e3cf4655e8b1b55de"
         ),
         .target(name: "Verivent", dependencies: ["VeriventKit"]),
         // For UI test targets: only XCTest and URLSession, nothing of Verivent in the test runner.

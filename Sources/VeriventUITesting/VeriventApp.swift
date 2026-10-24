@@ -73,8 +73,20 @@ public final class VeriventApp {
     }
 
     /// The latest `name` event on `channel`, waiting up to `timeout` for one, to check on its own.
-    public func lastEvent(_ name: String, on channel: String, timeout: TimeInterval = 5) -> VeriventEventCheck {
-        VeriventEventCheck(server: server, event: ["name": name, "channel": channel, "timeout": Int(timeout * 1000)], timeout: timeout)
+    /// For an event sent in several ways (a generic event), only the latest of the tracking plan's
+    /// `variant`, and only one sent with every value in `where`: one sent after it as another
+    /// variant doesn't count.
+    public func lastEvent(
+        _ name: String,
+        on channel: String,
+        variant: String? = nil,
+        where values: [String: Any] = [:],
+        timeout: TimeInterval = 5
+    ) -> VeriventEventCheck {
+        var event: [String: Any] = ["name": name, "channel": channel, "timeout": Int(timeout * 1000)]
+        if let variant = variant { event["variant"] = variant }
+        if !values.isEmpty { event["where"] = values }
+        return VeriventEventCheck(server: server, event: event, timeout: timeout)
     }
 
     private func baseline(_ name: String, in bundle: Bundle?) throws -> Data {
